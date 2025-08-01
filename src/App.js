@@ -1,25 +1,33 @@
-import logo from './logo.svg';
-import './App.css';
+import React, { useEffect, useState } from 'react';
 
 function App() {
+  const [status, setStatus] = useState(null);
+
+  useEffect(() => {
+    fetch('http://localhost:8080/api/health')
+        .then(response => response.json())
+        .then(data => {
+          console.log("Health API response:", data); // debug
+          setStatus(data);
+        })
+        .catch(error => {
+          console.error('Fetch error:', error); // debug
+          setStatus({ status: 'Error', db: 'Unavailable' });
+        });
+  }, []);
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        fatema
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
-    </div>
+      <div style={{ padding: '2rem' }}>
+        <h1>SecurePay Health Check</h1>
+        {status ? (
+            <div>
+              <p><strong>Backend Status:</strong> {status.status}</p>
+              <p><strong>DB Status:</strong> {status.db}</p>
+            </div>
+        ) : (
+            <p>Loading...</p>
+        )}
+      </div>
   );
 }
 
