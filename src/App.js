@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { CreditCard, Shield, Key, Activity, Plus, Send, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 
-const API_BASE_URL = 'http://localhost:8080/api';
+const API_BASE_URL = '/api';
 
 // Utility functions for crypto operations (simplified for demo)
 const CryptoUtils = {
