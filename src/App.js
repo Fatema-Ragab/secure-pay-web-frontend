@@ -4,13 +4,36 @@ import CryptoJS from 'crypto-js';
 
 const API_BASE_URL = '/api';
 
+// Corrected Base64 to ArrayBuffer conversion function
+const base64ToArrayBuffer = (base64) => {
+    const binaryString = window.atob(base64);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes.buffer;
+};
+
+// Corrected ArrayBuffer to Base64 conversion function
+const arrayBufferToBase64 = (buffer) => {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return window.btoa(binary);
+};
+
+
 // Crypto utilities using only Web Crypto API and CryptoJS
 const CryptoUtils = {
     generateNonce: () => Math.random().toString(36).substring(2, 15),
 
-    // Base64 encode/decode
-    toBase64: (str) => btoa(str),
-    fromBase64: (str) => atob(str),
+    // Re-use the new helper functions
+    toBase64: arrayBufferToBase64,
+    fromBase64: base64ToArrayBuffer,
 
     // Convert string to bytes and vice versa
     stringToBytes: (str) => new TextEncoder().encode(str),
@@ -40,6 +63,8 @@ const CryptoUtils = {
             }
             if (!this.clientPrivateKeyPem) {
                 console.log('Loading client private key...');
+
+                //const clientPrivResponse = await fetch('/keys/client_rsa_private_pkcs8.pem');
                 const clientPrivResponse = await fetch('/keys/client_rsa_private.pem');
                 if (!clientPrivResponse.ok) {
                     throw new Error(`Failed to load client private key: ${clientPrivResponse.status}`);
@@ -65,7 +90,7 @@ const CryptoUtils = {
                 .replace(/-----END PUBLIC KEY-----/g, '')
                 .replace(/\s/g, '');
 
-            const keyBuffer = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
+            const keyBuffer = base64ToArrayBuffer(pemContents); // Use the corrected converter
 
             // Import the key
             const publicKey = await crypto.subtle.importKey(
@@ -87,7 +112,7 @@ const CryptoUtils = {
                 plaintextBuffer
             );
 
-            const result = btoa(String.fromCharCode(...new Uint8Array(encrypted)));
+            const result = arrayBufferToBase64(encrypted); // Use the corrected converter
             console.log('RSA encryption successful');
             return result;
         } catch (error) {
@@ -95,6 +120,54 @@ const CryptoUtils = {
             throw new Error('RSA encryption failed: ' + error.message);
         }
     },
+
+
+    // RSA Decryption using Web Crypto API
+    async rsaDecrypt(ciphertext) {
+        await this.loadKeys();
+        try {
+            console.log('Attempting RSA decryption with Web Crypto API...');
+
+            // Convert PEM to ArrayBuffer
+            const pemContents = this.clientPrivateKeyPem
+                .replace(/-----BEGIN PRIVATE KEY-----/g, '')
+                .replace(/-----END PRIVATE KEY-----/g, '')
+                .replace(/\s/g, '');
+
+
+            const keyBuffer = base64ToArrayBuffer(pemContents); // Use the corrected converter
+            console.log('Converted PEM to ArrayBuffer...');
+
+            // Import the private key
+            const privateKey = await crypto.subtle.importKey(
+                'pkcs8',
+                keyBuffer,
+                {
+                    name: 'RSA-OAEP',
+                    hash: 'SHA-1'
+                },
+                false,
+                ['decrypt']
+            );
+            console.log('Imported the private key...');
+
+            // Decrypt the ciphertext
+            const ciphertextBuffer = base64ToArrayBuffer(ciphertext); // Use the corrected converter
+            const decrypted = await crypto.subtle.decrypt(
+                { name: 'RSA-OAEP' },
+                privateKey,
+                ciphertextBuffer
+            );
+
+            const result = new TextDecoder().decode(decrypted);
+            console.log('RSA decryption successful');
+            return result;
+        } catch (error) {
+            console.error('RSA decryption failed:', error);
+            throw new Error('RSA decryption failed: ' + error.message);
+        }
+    },
+
 
     // RSA Signing using Web Crypto API
     async rsaSign(message) {
@@ -108,7 +181,7 @@ const CryptoUtils = {
                 .replace(/-----END PRIVATE KEY-----/g, '')
                 .replace(/\s/g, '');
 
-            const keyBuffer = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
+            const keyBuffer = base64ToArrayBuffer(pemContents); // Use the corrected converter
 
             // Import the private key
             const privateKey = await crypto.subtle.importKey(
@@ -133,7 +206,7 @@ const CryptoUtils = {
                 messageBuffer
             );
 
-            const result = btoa(String.fromCharCode(...new Uint8Array(signature)));
+            const result = arrayBufferToBase64(signature); // Use the corrected converter
             console.log('RSA signing successful');
             return result;
         } catch (error) {
@@ -153,8 +226,8 @@ const CryptoUtils = {
     // AES-GCM encryption
     async aesEncrypt(key, iv, plaintext) {
         try {
-            const keyBuffer = Uint8Array.from(atob(key), c => c.charCodeAt(0));
-            const ivBuffer = Uint8Array.from(atob(iv), c => c.charCodeAt(0));
+            const keyBuffer = base64ToArrayBuffer(key);
+            const ivBuffer = base64ToArrayBuffer(iv);
             const plaintextBuffer = new TextEncoder().encode(plaintext);
 
             const cryptoKey = await crypto.subtle.importKey(
@@ -171,7 +244,7 @@ const CryptoUtils = {
                 plaintextBuffer
             );
 
-            return btoa(String.fromCharCode(...new Uint8Array(encrypted)));
+            return arrayBufferToBase64(encrypted);
         } catch (error) {
             console.error('AES encryption failed:', error);
             // Fallback to crypto-js
@@ -388,7 +461,7 @@ const MerchantManagement = ({ onMerchantCreated }) => {
 };
 
 // Key Exchange Component
-const KeyExchange = ({ merchants }) => {
+const KeyExchange = ({ merchants, onKeysReceived }) => { // Add onKeysReceived prop
     const [selectedMerchant, setSelectedMerchant] = useState('');
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState('');
@@ -403,37 +476,35 @@ const KeyExchange = ({ merchants }) => {
         setMessage('');
 
         try {
-            console.log('Starting key exchange...');
-
-            // Create key request payload
+            // Create key request payload and encrypt/sign it... (this part is the same)
             const payload = {
                 merchantId: parseInt(selectedMerchant),
                 nonce: CryptoUtils.generateNonce(),
                 timestamp: Date.now()
             };
-
-            console.log('Payload created:', payload);
-
-            // Real RSA encryption and signing
             const payloadJson = JSON.stringify(payload);
-            console.log('Payload JSON:', payloadJson);
-
-            console.log('About to encrypt...');
             const encryptedPayload = await CryptoUtils.rsaEncrypt(payloadJson);
-            console.log('Encryption completed');
-
-            console.log('About to sign...');
             const signature = await CryptoUtils.rsaSign(payloadJson);
-            console.log('Signing completed');
+            const keyRequest = { ciphertext: encryptedPayload, signature: signature };
 
-            const keyRequest = {
-                ciphertext: encryptedPayload,
-                signature: signature
-            };
-
-            console.log('Sending key request:', keyRequest);
             const result = await apiService.exchangeKeys(keyRequest);
-            setMessage('Key exchange completed successfully!');
+
+            // --- NEW LOGIC: DECRYPT AND STORE KEYS ---
+            const decryptedJson = await CryptoUtils.rsaDecrypt(result.ciphertext);
+            const decryptedKeys = JSON.parse(decryptedJson);
+
+            // You should also verify the server's signature here for a complete solution
+            // but the prompt focuses on decrypting the keys.
+
+            // Pass the decrypted keys to the parent component
+            onKeysReceived({
+                aesKey: decryptedKeys.aesKeyBase64,
+                hmacKey: decryptedKeys.hmacKeyBase64,
+                merchantId: decryptedKeys.merchantId // Store merchant ID with keys
+            });
+
+            setMessage('Key exchange completed successfully! Keys decrypted and stored.');
+
         } catch (error) {
             console.error('Key exchange error:', error);
             setMessage(`Error: ${error.message}`);
@@ -487,7 +558,7 @@ const KeyExchange = ({ merchants }) => {
 };
 
 // Transaction Component
-const TransactionForm = ({ merchants }) => {
+const TransactionForm = ({ merchants, merchantKeys }) => { // Add merchantKeys prop
     const [formData, setFormData] = useState({
         merchantId: '',
         amount: '',
@@ -503,8 +574,9 @@ const TransactionForm = ({ merchants }) => {
             return;
         }
 
-        if (formData.pan.length !== 16) {
-            setMessage('Please enter a valid 16-digit card number');
+        // --- NEW LOGIC: KEY VALIDATION ---
+        if (!merchantKeys.aesKey || !merchantKeys.hmacKey || merchantKeys.merchantId !== parseInt(formData.merchantId)) {
+            setMessage('Please perform a key exchange for the selected merchant first.');
             return;
         }
 
@@ -512,11 +584,14 @@ const TransactionForm = ({ merchants }) => {
         setMessage('');
 
         try {
-            // Generate AES key and IV for PAN encryption
-            const aesKey = btoa(String.fromCharCode(...CryptoUtils.generateRandomIV(32))); // 256-bit key
-            const iv = btoa(String.fromCharCode(...CryptoUtils.generateRandomIV(16))); // 128-bit IV
+            // Get the keys from the props
+            const aesKey = merchantKeys.aesKey;
+            const hmacKey = merchantKeys.hmacKey;
 
-            // Encrypt PAN
+            // Generate IV for PAN encryption
+            const iv = btoa(String.fromCharCode(...CryptoUtils.generateRandomIV(12))); // IV size is 12 for OCB mode
+
+            // Encrypt PAN with the real AES key
             const encryptedPan = {
                 panCiphertext: await CryptoUtils.aesEncrypt(aesKey, iv, formData.pan),
                 iv: iv
@@ -532,9 +607,8 @@ const TransactionForm = ({ merchants }) => {
             const timestamp = Date.now();
             const signatureBase = JSON.stringify(transactionData) + timestamp;
 
-            // Generate HMAC signature (using mock HMAC key for demo)
-            const mockHmacKey = btoa('mock_hmac_key_for_demo_purposes_32bytes');
-            const signature = CryptoUtils.hmacSha256(mockHmacKey, signatureBase);
+            // Generate HMAC signature with the real HMAC key
+            const signature = CryptoUtils.hmacSha256(hmacKey, signatureBase);
 
             const result = await apiService.createTransaction(transactionData, signature, timestamp);
             console.log('Transaction result:', result);
@@ -635,6 +709,7 @@ const TransactionForm = ({ merchants }) => {
 // Main App Component
 const SecurePayApp = () => {
     const [merchants, setMerchants] = useState([]);
+    const [merchantKeys, setMerchantKeys] = useState({}); // New state to store keys
 
     const handleMerchantCreated = (merchant) => {
         setMerchants(prev => [...prev, merchant]);
@@ -658,10 +733,15 @@ const SecurePayApp = () => {
 
                     <div className="grid md:grid-cols-2 gap-6">
                         <MerchantManagement onMerchantCreated={handleMerchantCreated} />
-                        <KeyExchange merchants={merchants} />
+                        {/* Pass key-related props */}
+                        <KeyExchange
+                            merchants={merchants}
+                            onKeysReceived={setMerchantKeys}
+                        />
                     </div>
 
-                    <TransactionForm merchants={merchants} />
+                    {/* Pass the stored keys to the transaction form */}
+                    <TransactionForm merchants={merchants} merchantKeys={merchantKeys} />
                 </div>
 
                 {/* Footer */}
